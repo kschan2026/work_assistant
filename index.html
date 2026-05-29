@@ -33,7 +33,7 @@ body {
     /* 3열 레이아웃 */
     .columns {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: 1fr 1fr 1fr;
       gap: 32px;
       align-items: start;
     }
@@ -72,6 +72,7 @@ body {
 
     .column:nth-child(1) .category { animation-delay: 0.1s; }
     .column:nth-child(2) .category { animation-delay: 0.2s; }
+    .column:nth-child(3) .category { animation-delay: 0.3s; }
 
     .category-title {
       font-size: 12px;
@@ -277,6 +278,7 @@ body {
     <div id="app" class="columns">
       <div id="col-1" class="column"></div>
       <div id="col-2" class="column"></div>
+      <div id="col-3" class="column"></div>
     </div>
     <div id="modal" class="modal-overlay">
       <div class="modal-content">
