@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OTT 바로가기</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Apple SD Gothic Neo', 'Noto Sans KR', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      background-image:
+        radial-gradient(ellipse at 15% 0%, rgba(229, 9, 20, 0.12) 0%, transparent 45%),
+        radial-gradient(ellipse at 85% 0%, rgba(20, 22, 120, 0.12) 0%, transparent 45%),
+        radial-gradient(ellipse at 50% 100%, rgba(0, 179, 255, 0.12) 0%, transparent 45%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 40px 20px;
+      color: #1f2937;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 980px;
+    }
+
+    .header {
+      text-align: center;
+      margin-bottom: 34px;
+      animation: fadeDown 0.55s ease-out both;
+    }
+
+    .header h1 {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: -0.8px;
+      color: #273142;
+    }
+
+    .header p {
+      margin-top: 9px;
+      font-size: 14px;
+      color: #8b95a5;
+    }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 22px;
+    }
+
+    .service-card {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-height: 250px;
+      padding: 26px;
+      background: rgba(255, 255, 255, 0.94);
+      border-radius: 20px;
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.07);
+      text-decoration: none;
+      color: inherit;
+      overflow: hidden;
+      transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+      animation: fadeUp 0.55s ease-out both;
+    }
+
+    .service-card:nth-child(1) { animation-delay: 0.08s; }
+    .service-card:nth-child(2) { animation-delay: 0.16s; }
+    .service-card:nth-child(3) { animation-delay: 0.24s; }
+
+    .service-card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 16px 38px rgba(15, 23, 42, 0.12);
+    }
+
+    .service-card:active {
+      transform: translateY(-2px);
+    }
+
+    .service-card::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 5px;
+    }
+
+    .netflix::before { background: #e50914; }
+    .tving::before { background: linear-gradient(90deg, #ff0050, #ff2f8a); }
+    .disney::before { background: linear-gradient(90deg, #113ccf, #00a8ff); }
+
+    .logo-box {
+      width: 68px;
+      height: 68px;
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 24px;
+      font-weight: 900;
+      user-select: none;
+    }
+
+    .netflix .logo-box {
+      background: #111;
+      color: #e50914;
+      font-size: 38px;
+      font-family: Arial Black, Arial, sans-serif;
+    }
+
+    .tving .logo-box {
+      background: linear-gradient(135deg, #ff0050, #ff4fa0);
+      color: white;
+      font-size: 28px;
+      letter-spacing: -1px;
+    }
+
+    .disney .logo-box {
+      background: linear-gradient(135deg, #132b83, #0867d6);
+      color: white;
+      font-size: 25px;
+      font-family: Georgia, serif;
+    }
+
+    .service-name {
+      font-size: 22px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 8px;
+    }
+
+    .service-desc {
+      font-size: 13px;
+      color: #8a94a4;
+      line-height: 1.6;
+    }
+
+    .go {
+      margin-top: auto;
+      padding-top: 26px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      font-weight: 700;
+      color: #64748b;
+    }
+
+    .arrow {
+      font-size: 24px;
+      line-height: 1;
+      color: #b3bdca;
+      transition: transform 0.2s ease, color 0.2s ease;
+    }
+
+    .service-card:hover .arrow {
+      transform: translateX(4px);
+      color: #64748b;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 28px;
+      color: #adb6c4;
+      font-size: 12px;
+      animation: fadeUp 0.5s ease-out 0.35s both;
+    }
+
+    @keyframes fadeDown {
+      from { opacity: 0; transform: translateY(-16px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(18px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 760px) {
+      body {
+        align-items: flex-start;
+        padding-top: 34px;
+      }
+
+      .cards {
+        grid-template-columns: 1fr;
+      }
+
+      .service-card {
+        min-height: 205px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body { padding: 26px 16px; }
+      .header { margin-bottom: 26px; }
+      .header h1 { font-size: 25px; }
+      .service-card { padding: 22px; }
+      .logo-box { width: 60px; height: 60px; border-radius: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="container">
+    <header class="header">
+      <h1>🎬 OTT 바로가기</h1>
+      <p>보고 싶은 서비스를 선택하면 새 탭에서 열려요.</p>
+    </header>
+
+    <section class="cards" aria-label="OTT 서비스 바로가기">
+      <a class="service-card netflix" href="https://www.netflix.com/kr/" target="_blank" rel="noopener noreferrer">
+        <div class="logo-box" aria-hidden="true">N</div>
+        <div class="service-name">Netflix</div>
+        <div class="service-desc">넷플릭스 영화와 시리즈 바로가기</div>
+        <div class="go">
+          <span>넷플릭스 열기</span>
+          <span class="arrow">›</span>
+        </div>
+      </a>
+
+      <a class="service-card tving" href="https://www.tving.com/" target="_blank" rel="noopener noreferrer">
+        <div class="logo-box" aria-hidden="true">TV</div>
+        <div class="service-name">TVING</div>
+        <div class="service-desc">티빙 방송, 영화, 오리지널 바로가기</div>
+        <div class="go">
+          <span>티빙 열기</span>
+          <span class="arrow">›</span>
+        </div>
+      </a>
+
+      <a class="service-card disney" href="https://www.disneyplus.com/ko-kr" target="_blank" rel="noopener noreferrer">
+        <div class="logo-box" aria-hidden="true">D+</div>
+        <div class="service-name">Disney+</div>
+        <div class="service-desc">디즈니+ 영화와 시리즈 바로가기</div>
+        <div class="go">
+          <span>디즈니+ 열기</span>
+          <span class="arrow">›</span>
+        </div>
+      </a>
+    </section>
+
+    <footer class="footer">원하는 서비스를 눌러 바로 이동하세요.</footer>
+  </main>
+</body>
+</html>
