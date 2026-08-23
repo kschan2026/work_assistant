@@ -547,13 +547,13 @@
 
   // ============================================
   // ☁ Google Sheet 연동 설정
-  // Apps Script를 웹 앱으로 배포한 뒤 아래 주소만 바꿔주세요.
-  // 반드시 배포 URL의 /exec 주소를 사용합니다.
+  // Apps Script 웹 앱의 /exec 주소만 아래에 붙여넣으면 됩니다.
   // 예: https://script.google.com/macros/s/AKfycb.../exec
+  // 접근키는 사용하지 않습니다.
   // ============================================
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzeXKARWUjFpZ15i1dV5PLTG2z2EXQF6B6c6Sq8uQrkj1laQ2e61eoaLwN7MSA1sIt_/exec';
-  const ACCESS_KEY_STORAGE_KEY = 'seat_arranger_server_access_key_v1';
+  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUylTbHKuJQmDffzLvRBhSkKbpKJPto8_3ECfB-P_3sDhE55lQoZ0E/exec';
   const SERVER_SAVE_DELAY = 700;
+  const SERVER_LOAD_TIMEOUT = 10000;
 
   const defaultState = {
     currentClassId: 'class-1',
@@ -710,21 +710,6 @@
     if (type) els.syncStatus.classList.add(type);
   }
 
-  function getServerAccessKey(askIfMissing = false) {
-    let key = localStorage.getItem(ACCESS_KEY_STORAGE_KEY) || '';
-    if (key || !askIfMissing) return key;
-
-    const entered = prompt(
-      'Google Sheet 자리배치 데이터에 연결할 접근 키를 입력해줘.\n' +
-      '이 컴퓨터에서는 한 번 입력하면 저장해둘게.'
-    );
-
-    if (entered === null) return '';
-    key = entered.trim();
-    if (key) localStorage.setItem(ACCESS_KEY_STORAGE_KEY, key);
-    return key;
-  }
-
   function saveStateLocalOnly() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }
@@ -738,7 +723,6 @@
 
   function scheduleServerSave() {
     if (!isServerConfigured() || !serverSyncEnabled) return;
-    if (!getServerAccessKey(false)) return;
 
     clearTimeout(serverSaveTimer);
     serverSaveTimer = setTimeout(() => {
@@ -746,53 +730,82 @@
     }, SERVER_SAVE_DELAY);
   }
 
-  async function postToServer(payload) {
-    const response = await fetch(APPS_SCRIPT_URL, {
+  // Apps Script ContentService의 응답은 다른 도메인으로 리디렉션되므로
+  // 저장 요청은 no-cors POST로 보내고 응답 본문은 읽지 않는다.
+  async function postSaveToServer(payload) {
+    await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
-      redirect: 'follow',
+      mode: 'no-cors',
       headers: {
-        // 단순 요청으로 보내 Apps Script 앞단의 불필요한 CORS preflight를 피한다.
         'Content-Type': 'text/plain;charset=utf-8'
       },
       body: JSON.stringify(payload)
     });
+  }
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
+  // 브라우저에서 Apps Script의 데이터를 안전하게 "읽기" 위해 JSONP를 사용한다.
+  // Apps Script doGet()이 prefix 콜백을 실행해 결과를 돌려준다.
+  function loadFromServerJsonp() {
+    return new Promise((resolve, reject) => {
+      if (!isServerConfigured()) {
+        reject(new Error('Apps Script 주소가 설정되지 않았습니다.'));
+        return;
+      }
 
-    const text = await response.text();
-    try {
-      return JSON.parse(text);
-    } catch (e) {
-      throw new Error('서버 응답을 JSON으로 읽을 수 없습니다.');
-    }
+      const callbackName = `__seatServerCallback_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const script = document.createElement('script');
+      let finished = false;
+
+      const cleanup = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        if (script.parentNode) script.parentNode.removeChild(script);
+        try { delete window[callbackName]; } catch (e) { window[callbackName] = undefined; }
+      };
+
+      window[callbackName] = result => {
+        cleanup();
+        resolve(result);
+      };
+
+      const separator = APPS_SCRIPT_URL.includes('?') ? '&' : '?';
+      script.src = `${APPS_SCRIPT_URL}${separator}action=load&prefix=${encodeURIComponent(callbackName)}&_=${Date.now()}`;
+      script.async = true;
+      script.onerror = () => {
+        cleanup();
+        reject(new Error('Apps Script 불러오기 요청에 실패했습니다.'));
+      };
+
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error('Apps Script 응답 시간이 초과되었습니다.'));
+      }, SERVER_LOAD_TIMEOUT);
+
+      document.head.appendChild(script);
+    });
   }
 
   async function saveStateToServer() {
     if (!isServerConfigured() || !serverSyncEnabled) return false;
 
-    const key = getServerAccessKey(false);
-    if (!key) return false;
-
-    // 요청을 보내기 직전의 최신 상태를 별도로 복사한다.
+    // 요청 직전의 최신 상태를 복사한다.
     const stateSnapshot = JSON.parse(JSON.stringify(state));
     setSyncStatus('Google Sheet 저장 중...');
 
     try {
-      const result = await postToServer({
+      await postSaveToServer({
         action: 'save',
-        key,
         data: stateSnapshot
       });
 
-      if (!result || !result.ok) {
-        const message = (result && result.error) || '알 수 없는 서버 오류';
-        if (message.includes('접근 키')) {
-          localStorage.removeItem(ACCESS_KEY_STORAGE_KEY);
-          serverSyncEnabled = false;
-        }
-        throw new Error(message);
+      // no-cors POST는 응답 내용을 읽을 수 없으므로,
+      // 잠시 뒤 서버를 다시 읽어 연결 상태까지 확인한다.
+      await new Promise(resolve => setTimeout(resolve, 450));
+      const check = await loadFromServerJsonp();
+
+      if (!check || !check.ok) {
+        throw new Error((check && check.error) || '서버 저장 확인에 실패했습니다.');
       }
 
       setSyncStatus('Google Sheet 동기화됨', 'online');
@@ -812,33 +825,19 @@
       return;
     }
 
-    const key = getServerAccessKey(true);
-    if (!key) {
-      serverSyncEnabled = false;
-      setSyncStatus('서버 연결 안 함 · 로컬 저장');
-      return;
-    }
-
     setSyncStatus('Google Sheet 연결 중...');
 
     try {
-      const result = await postToServer({
-        action: 'load',
-        key
-      });
+      const result = await loadFromServerJsonp();
 
       if (!result || !result.ok) {
-        const message = (result && result.error) || '알 수 없는 서버 오류';
-        if (message.includes('접근 키')) {
-          localStorage.removeItem(ACCESS_KEY_STORAGE_KEY);
-          serverSyncEnabled = false;
-        }
-        throw new Error(message);
+        throw new Error((result && result.error) || '알 수 없는 서버 오류');
       }
 
-      // 서버에 아직 아무 데이터가 없으면 현재 컴퓨터의 기존 설정을 유지한다.
+      // 서버가 비어 있으면 현재 컴퓨터 설정을 최초 데이터로 올린다.
       if (!result.data) {
-        setSyncStatus('서버 데이터 없음 · 로컬 설정 사용', 'online');
+        setSyncStatus('서버 데이터 없음 · 현재 설정 저장 중...');
+        await saveStateToServer();
         return;
       }
 
