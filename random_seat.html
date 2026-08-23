@@ -1267,6 +1267,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       remove.textContent = '삭제';
       remove.addEventListener('click', () => {
         delete c.fixedSeats[seat];
+        saveState();
         renderFixedControls();
         renderBoard();
       });
@@ -1324,6 +1325,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       if (c.fixedSeats[key] === student) delete c.fixedSeats[key];
     });
     c.fixedSeats[seat] = student;
+    saveState();
     renderFixedControls();
     renderBoard();
     toast(`${student} 학생을 ${seat}번 자리에 고정했어.`);
@@ -1401,7 +1403,16 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
   els.rosterInput.addEventListener('input', updateStudentCount);
   els.loadBtn.addEventListener('click', loadStateFromServer);
   els.saveBtn.addEventListener('click', saveAllSettings);
-  els.saveFixedBtn.addEventListener('click', () => { saveEditorToState(false); saveStateLocalOnly(); renderFixedControls(); setSyncStatus(isServerConfigured() ? '로컬 변경됨 · Google Sheet 미저장' : 'Apps Script 주소 미설정 · 로컬 저장'); toast('고정석 변경을 이 컴퓨터에 저장했어. Google Sheet 반영은 설정 저장을 눌러줘.'); });
+  els.saveFixedBtn.addEventListener('click', () => {
+    // 고급 설정의 변경 내용은 이 컴퓨터에만 저장한다.
+    // Google Sheet에는 기본 설정의 "설정 저장" 버튼을 눌렀을 때
+    // 학급/명단/좌석 크기/공석/고정석을 포함한 state 전체가 함께 저장된다.
+    saveEditorToState(false);
+    saveStateLocalOnly();
+    renderFixedControls();
+    setSyncStatus('로컬 변경됨 · Google Sheet 미저장');
+    toast('고정석 변경 내용을 이 컴퓨터에 저장했어.');
+  });
   els.newClassBtn.addEventListener('click', createClass);
   els.deleteClassBtn.addEventListener('click', deleteClass);
   els.addFixedBtn.addEventListener('click', addFixedSeat);
