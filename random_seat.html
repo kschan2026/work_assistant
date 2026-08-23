@@ -473,7 +473,7 @@
   <aside class="side-panel">
     <div class="side-head">
       <h3>자리 배치 설정</h3>
-      <p>학급 명단과 좌석 상태를 설정할 수 있어.</p>
+      <p>학급 명단과 좌석 상태를 설정할 수 있어. Google Sheet는 수동으로 불러오고 저장해.</p>
       <p class="sync-status" id="syncStatus">로컬 저장 모드</p>
     </div>
 
@@ -504,10 +504,11 @@
           <span>입력 인원 <strong id="studentCount">0명</strong></span>
         </div>
 
-        <div class="side-actions">
-          <button class="btn btn-save btn-small" id="saveBtn">설정 저장</button>
-          <button class="btn btn-danger btn-small" id="newClassBtn">반 추가</button>
+        <div class="side-actions" style="grid-template-columns:1fr 1fr;">
+          <button class="btn btn-secondary btn-small" id="loadBtn">☁ 설정 불러오기</button>
+          <button class="btn btn-save btn-small" id="saveBtn">☁ 설정 저장</button>
         </div>
+        <button class="btn btn-danger btn-small" id="newClassBtn" style="width:100%;margin-top:8px;">반 추가</button>
         <button class="btn btn-secondary btn-small advanced-toggle" id="fixedToggleBtn">고급 설정</button>
       </div>
 
@@ -534,6 +535,13 @@
 <div class="toast" id="toast"></div>
 
 <script>
+// ============================================
+// ☁ Google Sheet 연동 설정
+// ★ 아래 Apps Script 웹 앱의 /exec 주소만 수정하면 됩니다.
+// 예: https://script.google.com/macros/s/AKfycb.../exec
+// ============================================
+const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUylTbHKuJQmDffzLvRBhSkKbpKJPto8_3ECfB-P_3sDhE55lQoZ0E/exec';
+
 (() => {
   const DEFAULT_ROWS = 5;
   const DEFAULT_COLS = 5;
@@ -544,15 +552,6 @@
   const STORAGE_KEY = 'seat_arranger_light_v4';
   const OLD_STORAGE_KEY_V3 = 'seat_arranger_light_v3';
   const OLD_STORAGE_KEY_V2 = 'seat_arranger_light_v2';
-
-  // ============================================
-  // ☁ Google Sheet 연동 설정
-  // Apps Script 웹 앱의 /exec 주소만 아래에 붙여넣으면 됩니다.
-  // 예: https://script.google.com/macros/s/AKfycb.../exec
-  // 접근키는 사용하지 않습니다.
-  // ============================================
-  const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUylTbHKuJQmDffzLvRBhSkKbpKJPto8_3ECfB-P_3sDhE55lQoZ0E/exec';
-  const SERVER_SAVE_DELAY = 700;
   const SERVER_LOAD_TIMEOUT = 10000;
 
   const defaultState = {
@@ -576,9 +575,6 @@
   let phase = 'idle';
   let shuffleTimers = [];
   let fixedSettingsVisible = false;
-  let serverSaveTimer = null;
-  let suppressServerSave = false;
-  let serverSyncEnabled = true;
 
   const els = {
     classSelect: document.getElementById('classSelect'),
@@ -593,6 +589,7 @@
     sheetSubTitle: document.getElementById('sheetSubTitle'),
     shuffleBtn: document.getElementById('shuffleBtn'),
     resetBtn: document.getElementById('resetBtn'),
+    loadBtn: document.getElementById('loadBtn'),
     saveBtn: document.getElementById('saveBtn'),
     newClassBtn: document.getElementById('newClassBtn'),
     deleteClassBtn: document.getElementById('deleteClassBtn'),
@@ -715,19 +712,15 @@
   }
 
   function saveState() {
-    // 인터넷 연결과 관계없이 이 컴퓨터에도 항상 백업한다.
+    // 평소 변경 내용은 이 컴퓨터에만 저장한다.
+    // Google Sheet에는 아래의 "설정 저장" 버튼을 눌렀을 때만 저장한다.
     saveStateLocalOnly();
 
-    if (!suppressServerSave) scheduleServerSave();
-  }
-
-  function scheduleServerSave() {
-    if (!isServerConfigured() || !serverSyncEnabled) return;
-
-    clearTimeout(serverSaveTimer);
-    serverSaveTimer = setTimeout(() => {
-      saveStateToServer();
-    }, SERVER_SAVE_DELAY);
+    if (isServerConfigured()) {
+      setSyncStatus('로컬 변경됨 · Google Sheet 미저장');
+    } else {
+      setSyncStatus('Apps Script 주소 미설정 · 로컬 저장');
+    }
   }
 
   // Apps Script ContentService의 응답은 다른 도메인으로 리디렉션되므로
@@ -787,7 +780,11 @@
   }
 
   async function saveStateToServer() {
-    if (!isServerConfigured() || !serverSyncEnabled) return false;
+    if (!isServerConfigured()) {
+      setSyncStatus('Apps Script 주소 미설정 · 로컬 저장', 'error');
+      toast('Apps Script 웹앱 주소를 먼저 설정해줘.');
+      return false;
+    }
 
     // 요청 직전의 최신 상태를 복사한다.
     const stateSnapshot = JSON.parse(JSON.stringify(state));
@@ -821,11 +818,14 @@
 
   async function loadStateFromServer() {
     if (!isServerConfigured()) {
-      setSyncStatus('Apps Script 주소 미설정 · 로컬 저장');
-      return;
+      setSyncStatus('Apps Script 주소 미설정 · 로컬 저장', 'error');
+      toast('Apps Script 웹앱 주소를 먼저 설정해줘.');
+      return false;
     }
 
-    setSyncStatus('Google Sheet 연결 중...');
+    setSyncStatus('Google Sheet에서 불러오는 중...');
+    if (els.loadBtn) els.loadBtn.disabled = true;
+    if (els.saveBtn) els.saveBtn.disabled = true;
 
     try {
       const result = await loadFromServerJsonp();
@@ -834,14 +834,13 @@
         throw new Error((result && result.error) || '알 수 없는 서버 오류');
       }
 
-      // 서버가 비어 있으면 현재 컴퓨터 설정을 최초 데이터로 올린다.
+      // 서버가 비어 있어도 현재 컴퓨터의 초기값을 자동으로 올리지 않는다.
       if (!result.data) {
-        setSyncStatus('서버 데이터 없음 · 현재 설정 저장 중...');
-        await saveStateToServer();
-        return;
+        setSyncStatus('Google Sheet에 저장된 설정 없음');
+        toast('Google Sheet에 저장된 자리배치 설정이 아직 없어.');
+        return false;
       }
 
-      suppressServerSave = true;
       state = normalizeState(result.data, false);
       saveStateLocalOnly();
 
@@ -850,16 +849,38 @@
       document.getElementById('rosterTab').hidden = false;
       renderClassSelect();
       loadActiveClassIntoEditor();
-      suppressServerSave = false;
 
-      setSyncStatus('Google Sheet에서 불러옴', 'online');
+      setSyncStatus('Google Sheet 설정 불러옴', 'online');
       toast('Google Sheet의 자리배치 설정을 불러왔어.');
+      return true;
 
     } catch (error) {
-      suppressServerSave = false;
       console.error('Google Sheet 불러오기 실패:', error);
-      setSyncStatus('서버 연결 실패 · 로컬 설정 사용', 'error');
-      toast('서버 설정을 불러오지 못해서 이 컴퓨터의 저장값을 사용하고 있어.');
+      setSyncStatus('설정 불러오기 실패 · 로컬 설정 유지', 'error');
+      toast('Google Sheet 설정을 불러오지 못했어. 현재 화면의 설정은 그대로 유지돼.');
+      return false;
+
+    } finally {
+      if (els.loadBtn) els.loadBtn.disabled = false;
+      if (els.saveBtn) els.saveBtn.disabled = false;
+    }
+  }
+
+  async function saveAllSettings() {
+    // 화면에서 편집 중인 최신 값을 state에 반영하고 먼저 로컬 백업한다.
+    saveEditorToState(false);
+    saveStateLocalOnly();
+
+    if (els.loadBtn) els.loadBtn.disabled = true;
+    if (els.saveBtn) els.saveBtn.disabled = true;
+
+    try {
+      const ok = await saveStateToServer();
+      if (ok) toast('현재 설정을 Google Sheet에 저장했어.');
+      return ok;
+    } finally {
+      if (els.loadBtn) els.loadBtn.disabled = false;
+      if (els.saveBtn) els.saveBtn.disabled = false;
     }
   }
 
@@ -1378,8 +1399,9 @@
   els.seatRows.addEventListener('change', () => applyGridSize(true));
   els.seatCols.addEventListener('change', () => applyGridSize(true));
   els.rosterInput.addEventListener('input', updateStudentCount);
-  els.saveBtn.addEventListener('click', () => saveEditorToState(true));
-  els.saveFixedBtn.addEventListener('click', () => { saveEditorToState(false); saveState(); renderFixedControls(); toast('고정석 설정을 저장했어.'); });
+  els.loadBtn.addEventListener('click', loadStateFromServer);
+  els.saveBtn.addEventListener('click', saveAllSettings);
+  els.saveFixedBtn.addEventListener('click', () => { saveEditorToState(false); saveStateLocalOnly(); renderFixedControls(); setSyncStatus(isServerConfigured() ? '로컬 변경됨 · Google Sheet 미저장' : 'Apps Script 주소 미설정 · 로컬 저장'); toast('고정석 변경을 이 컴퓨터에 저장했어. Google Sheet 반영은 설정 저장을 눌러줘.'); });
   els.newClassBtn.addEventListener('click', createClass);
   els.deleteClassBtn.addEventListener('click', deleteClass);
   els.addFixedBtn.addEventListener('click', addFixedSeat);
@@ -1393,11 +1415,12 @@
     els.sheetSubTitle.textContent = activeClass().name;
   });
 
-  // 먼저 로컬 저장값으로 즉시 화면을 띄운 뒤,
-  // 서버가 설정되어 있으면 Google Sheet의 공통 설정으로 교체한다.
+  // 시작할 때는 서버와 자동 동기화하지 않는다.
+  // 이 컴퓨터의 로컬 저장값만 표시하고,
+  // Google Sheet 데이터는 사용자가 "설정 불러오기"를 눌렀을 때만 가져온다.
   renderClassSelect();
   loadActiveClassIntoEditor();
-  loadStateFromServer();
+  setSyncStatus(isServerConfigured() ? '수동 동기화 · 불러오기/저장 버튼 사용' : 'Apps Script 주소 미설정 · 로컬 저장');
 })();
 </script>
 </body>
