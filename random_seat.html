@@ -280,7 +280,15 @@
     align-items: center;
     justify-content: center;
     letter-spacing: 7px;
+    order: 2;
   }
+
+  .seat-area { order: 1; }
+  .print-sheet.student-view .teacher-desk {
+    order: 1;
+    margin: 0 auto 24px;
+  }
+  .print-sheet.student-view .seat-area { order: 2; }
 
   .control-bar {
     margin-top: 16px;
@@ -436,6 +444,7 @@
     .seat-number { display: none !important; }
     .seat.fixed-admin::before { display: none; }
     .teacher-desk { width: 80mm; height: 15mm; margin-top: 7mm; }
+    .print-sheet.student-view .teacher-desk { margin: 0 auto 7mm; }
   }
 </style>
 </head>
@@ -466,6 +475,7 @@
 
     <div class="control-bar">
       <button class="btn btn-secondary" id="resetBtn">↻ 판 초기화</button>
+      <button class="btn btn-secondary" id="rotateViewBtn" disabled>↻ 180도 회전 보기</button>
       <button class="btn btn-primary" id="shuffleBtn">✦ 무작위 자리 배치 시작!</button>
     </div>
   </main>
@@ -496,7 +506,7 @@
 
         <div class="field">
           <label for="rosterInput">학생 이름 목록 <span class="hint">쉼표 또는 줄바꿈</span></label>
-          <textarea id="rosterInput" placeholder="김민수&#10;이서연&#10;박준호"></textarea>
+          <textarea id="rosterInput" placeholder=""></textarea>
         </div>
 
         <div class="stats">
@@ -564,7 +574,9 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
         cols: DEFAULT_COLS,
         roster: Array.from({length: 23}, (_, i) => `${i + 1}번`),
         fixedSeats: {},
-        emptySeats: [...DEFAULT_EMPTY_SEATS]
+        emptySeats: [...DEFAULT_EMPTY_SEATS],
+        savedAssignments: {},
+        savedViewMode: 'teacher'
       }
     ]
   };
@@ -575,6 +587,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
   let phase = 'idle';
   let shuffleTimers = [];
   let fixedSettingsVisible = false;
+  let boardViewMode = 'teacher';
 
   const els = {
     classSelect: document.getElementById('classSelect'),
@@ -586,9 +599,11 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
     studentCount: document.getElementById('studentCount'),
     availableSeats: document.getElementById('availableSeats'),
     seatArea: document.getElementById('seatArea'),
+    printSheet: document.getElementById('printSheet'),
     sheetSubTitle: document.getElementById('sheetSubTitle'),
     shuffleBtn: document.getElementById('shuffleBtn'),
     resetBtn: document.getElementById('resetBtn'),
+    rotateViewBtn: document.getElementById('rotateViewBtn'),
     loadBtn: document.getElementById('loadBtn'),
     saveBtn: document.getElementById('saveBtn'),
     newClassBtn: document.getElementById('newClassBtn'),
@@ -657,13 +672,23 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
         if (n >= 1 && n <= capacity && !emptySeats.includes(n)) cleanedFixed[n] = student;
       });
 
+      const cleanedSavedAssignments = {};
+      Object.entries(c.savedAssignments || {}).forEach(([seat, student]) => {
+        const n = Number(seat);
+        if (n >= 1 && n <= capacity && !emptySeats.includes(n) && typeof student === 'string' && student.trim()) {
+          cleanedSavedAssignments[n] = student;
+        }
+      });
+
       return {
         ...c,
         rows,
         cols,
         roster: Array.isArray(c.roster) ? c.roster.slice(0, MAX_SEATS) : [],
         fixedSeats: cleanedFixed,
-        emptySeats
+        emptySeats,
+        savedAssignments: cleanedSavedAssignments,
+        savedViewMode: c.savedViewMode === 'student' ? 'student' : 'teacher'
       };
     });
 
@@ -721,6 +746,103 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
     } else {
       setSyncStatus('Apps Script 주소 미설정 · 로컬 저장');
     }
+  }
+
+
+  function getRenderedSeatOrder(c = activeClass()) {
+    const seats = physicalLayout(c);
+    return boardViewMode === 'student' ? [...seats].reverse() : seats;
+  }
+
+  function hasSavedArrangement(c = activeClass()) {
+    return !!(c && c.savedAssignments && Object.keys(c.savedAssignments).length);
+  }
+
+  function discardSavedArrangement(c = activeClass()) {
+    if (!c) return;
+    c.savedAssignments = {};
+    c.savedViewMode = 'teacher';
+  }
+
+  function updateRotateButton() {
+    if (!els.rotateViewBtn) return;
+    const canRotate = phase === 'done' || hasSavedArrangement();
+    els.rotateViewBtn.disabled = !canRotate;
+    els.rotateViewBtn.textContent = boardViewMode === 'student'
+      ? '↺ 원래 방향 보기'
+      : '↻ 180도 회전 보기';
+  }
+
+  function applyBoardViewMode(mode, rerender = true) {
+    boardViewMode = mode === 'student' ? 'student' : 'teacher';
+    if (els.printSheet) {
+      els.printSheet.classList.toggle('student-view', boardViewMode === 'student');
+    }
+    updateRotateButton();
+    if (rerender) renderBoard();
+  }
+
+  function showEmptyBoard() {
+    clearTimers();
+    phase = 'idle';
+    displayAssignments = {};
+    finalAssignments = {};
+    applyBoardViewMode('teacher', false);
+    els.shuffleBtn.disabled = false;
+    els.resetBtn.disabled = false;
+    els.shuffleBtn.textContent = '✦ 무작위 자리 배치 시작!';
+    updateRotateButton();
+    renderBoard();
+  }
+
+  function restoreSavedArrangement() {
+    const c = activeClass();
+    if (!hasSavedArrangement(c)) {
+      showEmptyBoard();
+      return;
+    }
+
+    clearTimers();
+    phase = 'done';
+    finalAssignments = {...c.savedAssignments};
+    displayAssignments = {...c.savedAssignments};
+    els.shuffleBtn.disabled = false;
+    els.resetBtn.disabled = false;
+    els.shuffleBtn.textContent = '✦ 다시 무작위 자리 배치';
+    applyBoardViewMode(c.savedViewMode || 'teacher', false);
+    updateRotateButton();
+    renderBoard();
+  }
+
+  function persistCurrentArrangementLocally() {
+    const c = activeClass();
+    c.savedAssignments = {...finalAssignments};
+    c.savedViewMode = boardViewMode;
+    saveState();
+  }
+
+  function toggleBoardView() {
+    if (!(phase === 'done' || hasSavedArrangement())) {
+      toast('먼저 자리 배치를 완료한 뒤에 회전해서 볼 수 있어.');
+      return;
+    }
+
+    const nextMode = boardViewMode === 'student' ? 'teacher' : 'student';
+    applyBoardViewMode(nextMode, true);
+
+    if (phase === 'done' || hasSavedArrangement()) {
+      const c = activeClass();
+      c.savedViewMode = boardViewMode;
+      saveState();
+    }
+
+    toast(boardViewMode === 'student' ? '학생 화면용으로 180도 돌려서 보여줄게.' : '원래 교사용 방향으로 되돌렸어.');
+  }
+
+  function resetBoard() {
+    discardSavedArrangement(activeClass());
+    saveState();
+    showEmptyBoard();
   }
 
   // Apps Script ContentService의 응답은 다른 도메인으로 리디렉션되므로
@@ -786,8 +908,14 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       return false;
     }
 
-    // 요청 직전의 최신 상태를 복사한다.
+    // Google Sheet에는 설정값만 저장한다.
+    // 실제 랜덤 자리 배치 결과(savedAssignments)와 화면 회전 상태(savedViewMode)는
+    // 이 컴퓨터의 localStorage에만 남기고 서버에는 보내지 않는다.
     const stateSnapshot = JSON.parse(JSON.stringify(state));
+    stateSnapshot.classes = stateSnapshot.classes.map(c => {
+      const { savedAssignments, savedViewMode, ...settingsOnly } = c;
+      return settingsOnly;
+    });
     setSyncStatus('Google Sheet 저장 중...');
 
     try {
@@ -926,7 +1054,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
     els.sheetSubTitle.textContent = c.name;
     updateStudentCount();
     renderFixedControls();
-    resetBoard();
+    restoreSavedArrangement();
   }
 
   function renderBoard(revealSeat = null) {
@@ -954,7 +1082,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
     const emptySet = new Set((c.emptySeats || []).map(Number));
     els.seatArea.innerHTML = '';
 
-    physicalLayout(c).forEach(seatNum => {
+    getRenderedSeatOrder(c).forEach(seatNum => {
       const seat = document.createElement('div');
       const isEmpty = emptySet.has(seatNum);
 
@@ -987,6 +1115,8 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       seat.appendChild(name);
       els.seatArea.appendChild(seat);
     });
+
+    updateRotateButton();
   }
 
   function toggleEmptySeat(seatNum) {
@@ -1008,8 +1138,9 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
     }
 
     c.emptySeats = [...emptySet].sort((a,b) => a-b);
+    discardSavedArrangement(c);
     saveState();
-    resetBoard();
+    showEmptyBoard();
     renderFixedControls();
     updateStudentCount();
     toast(makingEmpty ? '선택한 자리를 공석으로 바꿨어.' : '선택한 공석을 다시 사용할 수 있게 했어.');
@@ -1052,10 +1183,11 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       if (n >= 1 && n <= capacity && !emptySet.has(n)) cleanedFixed[n] = student;
     });
     c.fixedSeats = cleanedFixed;
+    discardSavedArrangement(c);
 
     saveState();
     updateGridSummary();
-    resetBoard();
+    showEmptyBoard();
     renderFixedControls();
     updateStudentCount();
     if (showMessage) toast(`좌석을 ${rows} × ${cols} 배열로 바꿨어.`);
@@ -1073,6 +1205,9 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
 
   function saveEditorToState(showMessage = true) {
     const c = activeClass();
+    const previousRows = c.rows;
+    const previousCols = c.cols;
+    const previousRosterJson = JSON.stringify(c.roster || []);
     const roster = getEditingRoster();
     const className = els.className.value.trim() || '이름 없는 반';
     const rows = clampDimension(els.seatRows.value);
@@ -1097,6 +1232,13 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       }
     });
     c.fixedSeats = cleanedFixed;
+
+    if (previousRows !== rows || previousCols !== cols || previousRosterJson !== JSON.stringify(roster)) {
+      discardSavedArrangement(c);
+      if (phase === 'done') {
+        showEmptyBoard();
+      }
+    }
 
     saveState();
     renderClassSelect();
@@ -1218,7 +1360,8 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
         els.shuffleBtn.disabled = false;
         els.resetBtn.disabled = false;
         els.shuffleBtn.textContent = '✦ 다시 무작위 자리 배치';
-        toast('자리 배치가 완료됐어.');
+        persistCurrentArrangementLocally();
+        toast('자리 배치가 완료됐어. 180도 회전 보기로 학생용 화면도 바로 띄울 수 있어.');
         return;
       }
 
@@ -1229,16 +1372,6 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
     shuffleTimers.push(reveal);
   }
 
-  function resetBoard() {
-    clearTimers();
-    phase = 'idle';
-    displayAssignments = {};
-    finalAssignments = {};
-    els.shuffleBtn.disabled = false;
-    els.resetBtn.disabled = false;
-    els.shuffleBtn.textContent = '✦ 무작위 자리 배치 시작!';
-    renderBoard();
-  }
 
   function renderFixedControls() {
     const c = activeClass();
@@ -1267,6 +1400,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       remove.textContent = '삭제';
       remove.addEventListener('click', () => {
         delete c.fixedSeats[seat];
+        discardSavedArrangement(c);
         saveState();
         renderFixedControls();
         renderBoard();
@@ -1325,6 +1459,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
       if (c.fixedSeats[key] === student) delete c.fixedSeats[key];
     });
     c.fixedSeats[seat] = student;
+    discardSavedArrangement(c);
     saveState();
     renderFixedControls();
     renderBoard();
@@ -1334,7 +1469,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
   function createClass() {
     saveEditorToState(false);
     const id = `class-${Date.now()}`;
-    state.classes.push({ id, name: '새로운 반', rows: DEFAULT_ROWS, cols: DEFAULT_COLS, roster: [], fixedSeats: {}, emptySeats: [...DEFAULT_EMPTY_SEATS] });
+    state.classes.push({ id, name: '새로운 반', rows: DEFAULT_ROWS, cols: DEFAULT_COLS, roster: [], fixedSeats: {}, emptySeats: [...DEFAULT_EMPTY_SEATS], savedAssignments: {}, savedViewMode: 'teacher' });
     state.currentClassId = id;
     saveState();
     renderClassSelect();
@@ -1406,12 +1541,13 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
   els.saveFixedBtn.addEventListener('click', () => {
     // 고급 설정의 변경 내용은 이 컴퓨터에만 저장한다.
     // Google Sheet에는 기본 설정의 "설정 저장" 버튼을 눌렀을 때
-    // 학급/명단/좌석 크기/공석/고정석을 포함한 state 전체가 함께 저장된다.
+    // 학급/명단/좌석 크기/공석/고정석만 Google Sheet에 저장된다.
+    // 실제 랜덤 배치 결과와 회전 방향은 이 컴퓨터에만 저장된다.
     saveEditorToState(false);
     saveStateLocalOnly();
     renderFixedControls();
     setSyncStatus('로컬 변경됨 · Google Sheet 미저장');
-    toast('고정석 변경 내용을 이 컴퓨터에 저장했어.');
+    toast('고정석 변경 내용을 이 컴퓨터에 저장했어. 필요하면 기본 설정에서 설정 저장을 눌러 서버에도 저장해줘.');
   });
   els.newClassBtn.addEventListener('click', createClass);
   els.deleteClassBtn.addEventListener('click', deleteClass);
@@ -1420,6 +1556,7 @@ const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbza_hyTSuFtbTUy
   els.fixedCloseBtn.addEventListener('click', closeFixedSettings);
   els.shuffleBtn.addEventListener('click', startShuffle);
   els.resetBtn.addEventListener('click', resetBoard);
+  els.rotateViewBtn.addEventListener('click', toggleBoardView);
 
   window.addEventListener('beforeprint', () => {
     saveEditorToState(false);
